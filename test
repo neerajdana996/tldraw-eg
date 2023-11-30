@@ -1,16 +1,1 @@
-function createFile(egnyte, filePath, logger) {
-    logger.info('Create file in path', filePath);
-    const { dir, base, ext } = path.parse(filePath);
 
-    return egnyteFolderHelper
-        .getUniqueFileName(egnyte, dir, base)
-        .then((uniqueFileName) => storeEmptyResource(egnyte, uniqueFileName, ext.slice(1), logger))
-        .then((_fileMetadata) => {
-            logger.info('File created in path', filePath);
-            return egnyte.API.storage.fileId(_fileMetadata.group_id).get();
-        })
-        .then((fileMetadata) => {
-            logger.info('new file metadata', fileMetadata);
-            return fileMetadata;
-        });
-}
