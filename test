@@ -1,63 +1,16 @@
-const path = require('path');
-const { incrementFile } = require('@integrations/pint-common/utils/file');
+function createFile(egnyte, filePath, logger) {
+    logger.info('Create file in path', filePath);
+    const { dir, base, ext } = path.parse(filePath);
 
-module.exports = {
-    getUniqueFileName(egnyte, folderPath, targetFileName) {
-        return egnyte.API.storage
-            .path(folderPath)
-            .get()
-            .then((folderMetadata) => {
-                const fileNames = folderMetadata.files || [];
-
-                if (fileExists(targetFileName, fileNames)) {
-                    return addSuffix(targetFileName, fileNames, folderPath);
-                }
-
-                return path.join(folderPath, targetFileName);
-            })
-            .catch((error) => {
-                if (error.statusCode === 404) {
-                    return path.join(folderPath, targetFileName);
-                }
-            });
-    },
-};
-
-function fileExists(fileName, fileNames) {
-    return fileNames.some((file) => file.name === fileName);
-}
-
-function addSuffix(fileName, fileNames, folderPath) {
-    let name;
-
-    while (!name) {
-        fileName = incrementFile(fileName);
-
-        if (fileExists(fileName, fileNames)) {
-            // eslint-disable-next-line no-continue
-            continue;
-        }
-
-        name = path.join(folderPath, fileName);
-    }
-
-    return name;
-}
-
-const stream = require('stream');
-const { EGNYTE_ACTION_SOURCE } = require('../../enums/customHeaders.json');
-
-module.exports = function storeEmptyFile(egnyte, path, logger) {
-    logger.debug(`Creating empty file for domain ${egnyte.domain}; path: ${path}`);
-    const emptyStream = new stream.Readable();
-    emptyStream.push(null);
-
-    return egnyte.API.storage
-        .customizeRequest((opts) => {
-            opts.headers = opts.headers || {};
-            opts.headers[EGNYTE_ACTION_SOURCE.HEADER_NAME] = EGNYTE_ACTION_SOURCE.ACTION_ID;
-            return opts;
+    return egnyteFolderHelper
+        .getUniqueFileName(egnyte, dir, base)
+        .then((uniqueFileName) => storeEmptyResource(egnyte, uniqueFileName, ext.slice(1), logger))
+        .then((_fileMetadata) => {
+            logger.info('File created in path', filePath);
+            return egnyte.API.storage.fileId(_fileMetadata.group_id).get();
         })
-        .path(path)
-        .storeFile(emptyStream);
-};
+        .then((fileMetadata) => {
+            logger.info('new file metadata', fileMetadata);
+            return fileMetadata;
+        });
+}
