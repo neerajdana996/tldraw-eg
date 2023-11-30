@@ -1,0 +1,54 @@
+const Egnyte = require('egnyte-js-sdk');
+
+
+const timeLogger = traceableLogger.init('-EGtime');
+let SDKInstances = {};
+
+function makeKey(domain, token) {
+    return `${domain}_${token}`;
+}
+
+function normalizeDomain(domainName) {
+    if (domainName.match(/^https:\/\//)) {
+        return domainName;
+    }
+    if (domainName.match(/^[^./]+$/)) {
+        return `https://${domainName}.egnyte.com`;
+    }
+    return `https://${domainName}`;
+}
+
+async function getInstance(domain, token) {
+    const normalizedDomain = normalizeDomain(domain);
+    const key = makeKey(normalizedDomain, token);
+
+    if (!SDKInstances[key]) {
+        SDKInstances[key] = Egnyte.init(normalizedDomain, {
+            token,
+            QPS: settings.QPS,
+            handleQuota: !settings.ignoreQuota,
+        });
+        SDKInstances[key].API.manual.setupTiming(
+            () => Date.now(),
+            (startTime) => {
+                timeLogger.trace('~%s ms', Date.now() - startTime);
+            }
+        );
+    }
+
+    return SDKInstances[key];
+}
+
+function clearInstances() {
+    SDKInstances = {};
+}
+
+// Caching is nice, but we need to prevent it from growing too big.
+// Note that an instance returned by getInstance will exist till the end of the request that uses it even if it gets cleaned up from the cache.
+setInterval(clearInstances, 10 * 60 * 1000);
+
+module.exports = {
+    getInstance,
+    clearInstances,
+    normalizeDomain,
+};
