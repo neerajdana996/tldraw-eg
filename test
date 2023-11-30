@@ -1,54 +1,63 @@
-const Egnyte = require('egnyte-js-sdk');
-
-
-const timeLogger = traceableLogger.init('-EGtime');
-let SDKInstances = {};
-
-function makeKey(domain, token) {
-    return `${domain}_${token}`;
-}
-
-function normalizeDomain(domainName) {
-    if (domainName.match(/^https:\/\//)) {
-        return domainName;
-    }
-    if (domainName.match(/^[^./]+$/)) {
-        return `https://${domainName}.egnyte.com`;
-    }
-    return `https://${domainName}`;
-}
-
-async function getInstance(domain, token) {
-    const normalizedDomain = normalizeDomain(domain);
-    const key = makeKey(normalizedDomain, token);
-
-    if (!SDKInstances[key]) {
-        SDKInstances[key] = Egnyte.init(normalizedDomain, {
-            token,
-            QPS: settings.QPS,
-            handleQuota: !settings.ignoreQuota,
-        });
-        SDKInstances[key].API.manual.setupTiming(
-            () => Date.now(),
-            (startTime) => {
-                timeLogger.trace('~%s ms', Date.now() - startTime);
-            }
-        );
-    }
-
-    return SDKInstances[key];
-}
-
-function clearInstances() {
-    SDKInstances = {};
-}
-
-// Caching is nice, but we need to prevent it from growing too big.
-// Note that an instance returned by getInstance will exist till the end of the request that uses it even if it gets cleaned up from the cache.
-setInterval(clearInstances, 10 * 60 * 1000);
+const path = require('path');
+const { incrementFile } = require('@integrations/pint-common/utils/file');
 
 module.exports = {
-    getInstance,
-    clearInstances,
-    normalizeDomain,
+    getUniqueFileName(egnyte, folderPath, targetFileName) {
+        return egnyte.API.storage
+            .path(folderPath)
+            .get()
+            .then((folderMetadata) => {
+                const fileNames = folderMetadata.files || [];
+
+                if (fileExists(targetFileName, fileNames)) {
+                    return addSuffix(targetFileName, fileNames, folderPath);
+                }
+
+                return path.join(folderPath, targetFileName);
+            })
+            .catch((error) => {
+                if (error.statusCode === 404) {
+                    return path.join(folderPath, targetFileName);
+                }
+            });
+    },
+};
+
+function fileExists(fileName, fileNames) {
+    return fileNames.some((file) => file.name === fileName);
+}
+
+function addSuffix(fileName, fileNames, folderPath) {
+    let name;
+
+    while (!name) {
+        fileName = incrementFile(fileName);
+
+        if (fileExists(fileName, fileNames)) {
+            // eslint-disable-next-line no-continue
+            continue;
+        }
+
+        name = path.join(folderPath, fileName);
+    }
+
+    return name;
+}
+
+const stream = require('stream');
+const { EGNYTE_ACTION_SOURCE } = require('../../enums/customHeaders.json');
+
+module.exports = function storeEmptyFile(egnyte, path, logger) {
+    logger.debug(`Creating empty file for domain ${egnyte.domain}; path: ${path}`);
+    const emptyStream = new stream.Readable();
+    emptyStream.push(null);
+
+    return egnyte.API.storage
+        .customizeRequest((opts) => {
+            opts.headers = opts.headers || {};
+            opts.headers[EGNYTE_ACTION_SOURCE.HEADER_NAME] = EGNYTE_ACTION_SOURCE.ACTION_ID;
+            return opts;
+        })
+        .path(path)
+        .storeFile(emptyStream);
 };
